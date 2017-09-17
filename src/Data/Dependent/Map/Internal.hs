@@ -33,7 +33,7 @@ import Data.Typeable (Typeable)
 -- function\") dependent product.
 data DMap k f where
     Tip :: DMap k f
-    Bin :: {- sz    -} !Int
+    Bin :: forall (v :: *) k f . DSumC v => {- sz    -} !Int
         -> {- key   -} !(k v)
         -> {- value -} f v
         -> {- left  -} !(DMap k f)
@@ -58,8 +58,8 @@ empty = Tip
 --
 -- > singleton 1 'a'        == fromList [(1, 'a')]
 -- > size (singleton 1 'a') == 1
-singleton :: k v -> f v -> DMap k f
-singleton k x = Bin 1 k x Tip Tip
+singleton :: DSum k f  -> DMap k f
+singleton (k :=> x) = Bin 1 k x Tip Tip
 
 {--------------------------------------------------------------------
   Query
@@ -90,7 +90,7 @@ lookup k = k `seq` go
                 GGT -> go r
                 GEQ -> Just x
 
-lookupAssoc :: forall k f v. GCompare k => Some k -> DMap k f -> Maybe (DSum k f)
+lookupAssoc :: forall k f.  GCompare k => Some k -> DMap k f -> Maybe (DSum k f)
 lookupAssoc (This k) = k `seq` go
   where
     go :: DMap k f -> Maybe (DSum k f)
@@ -133,28 +133,28 @@ lookupAssoc (This k) = k `seq` go
 {--------------------------------------------------------------------
   Combine
 --------------------------------------------------------------------}
-combine :: GCompare k => k v -> f v -> DMap k f -> DMap k f -> DMap k f
-combine kx x Tip r  = insertMin kx x r
-combine kx x l Tip  = insertMax kx x l
-combine kx x l@(Bin sizeL ky y ly ry) r@(Bin sizeR kz z lz rz)
-  | delta*sizeL <= sizeR  = balance kz z (combine kx x l lz) rz
-  | delta*sizeR <= sizeL  = balance ky y ly (combine kx x ry r)
-  | otherwise             = bin kx x l r
+combine :: GCompare k => DSum k f -> DMap k f -> DMap k f -> DMap k f
+combine kx Tip r  = insertMin kx r
+combine kx l Tip  = insertMax kx l
+combine kx l@(Bin sizeL ky y ly ry) r@(Bin sizeR kz z lz rz)
+  | delta*sizeL <= sizeR  = balance (kz :=> z)  (combine kx  l lz) rz
+  | delta*sizeR <= sizeL  = balance (ky :=> y) ly (combine kx ry r)
+  | otherwise             = bin kx  l r
 
 
 -- insertMin and insertMax don't perform potentially expensive comparisons.
-insertMax,insertMin :: k v -> f v -> DMap k f -> DMap k f
-insertMax kx x t
+insertMax,insertMin :: DSum k f  -> DMap k f -> DMap k f
+insertMax kx t
   = case t of
-      Tip -> singleton kx x
+      Tip -> singleton kx 
       Bin _ ky y l r
-          -> balance ky y l (insertMax kx x r)
+          -> balance (ky :=>  y) l (insertMax kx r)
              
-insertMin kx x t
+insertMin kx  t
   = case t of
-      Tip -> singleton kx x
+      Tip -> singleton kx 
       Bin _ ky y l r
-          -> balance ky y (insertMin kx x l) r
+          -> balance (ky :=>  y) (insertMin kx l) r
              
 {--------------------------------------------------------------------
   [merge l r]: merges two trees.
@@ -163,8 +163,8 @@ merge :: DMap k f -> DMap k f -> DMap k f
 merge Tip r   = r
 merge l Tip   = l
 merge l@(Bin sizeL kx x lx rx) r@(Bin sizeR ky y ly ry)
-  | delta*sizeL <= sizeR = balance ky y (merge l ly) ry
-  | delta*sizeR <= sizeL = balance kx x lx (merge rx r)
+  | delta*sizeL <= sizeR = balance (ky :=> y) (merge l ly) ry
+  | delta*sizeR <= sizeL = balance (kx :=> x) lx (merge rx r)
   | otherwise            = glue l r
 
 {--------------------------------------------------------------------
@@ -175,19 +175,17 @@ glue :: DMap k f -> DMap k f -> DMap k f
 glue Tip r = r
 glue l Tip = l
 glue l r   
-  | size l > size r = case deleteFindMax l of (km :=> m,l') -> balance km m l' r
-  | otherwise       = case deleteFindMin r of (km :=> m,r') -> balance km m l r'
+  | size l > size r = case deleteFindMax l of (km,l') -> balance km l' r
+  | otherwise       = case deleteFindMin r of (km,r') -> balance km l r'
 
 -- | /O(log n)/. Delete and find the minimal element.
 --
 -- > deleteFindMin (fromList [(5,"a"), (3,"b"), (10,"c")]) == ((3,"b"), fromList[(5,"a"), (10,"c")]) 
 -- > deleteFindMin                                            Error: can not return the minimal element of an empty map
-
 deleteFindMin :: DMap k f -> (DSum k f, DMap k f)
 deleteFindMin t = case minViewWithKey t of
       Nothing -> (error "Map.deleteFindMin: can not return the minimal element of an empty map", Tip)
       Just p -> p
-
 -- | A strict pair.
 data (:*:) a b = !a :*: !b
 infixr 1 :*:
@@ -203,31 +201,30 @@ data Triple' a b c = Triple' !a !b !c
 toTriple :: Triple' a b c -> (a, b, c)
 toTriple (Triple' a b c) = (a, b, c)
 {-# INLINE toTriple #-}
-
 -- | /O(log n)/. Retrieves the minimal (key :=> value) entry of the map, and
 -- the map stripped of that element, or 'Nothing' if passed an empty map.
-minViewWithKey :: forall k f . DMap k f -> Maybe (DSum k f, DMap k f)
+minViewWithKey :: forall k f  . DMap k f -> Maybe (DSum k f, DMap k f)
 minViewWithKey Tip = Nothing
-minViewWithKey (Bin _ k0 x0 l0 r0) = Just $! toPair $ go k0 x0 l0 r0
-  where
-    go :: k v -> f v -> DMap k f -> DMap k f -> DSum k f :*: DMap k f
-    go k x Tip r = (k :=> x) :*: r
-    go k x (Bin _ kl xl ll lr) r =
-      let !(km :*: l') = go kl xl ll lr
-      in (km :*: balance k x l' r)
+minViewWithKey (Bin _ (k0 :: k v) (x0 :: f v) l0 r0) = 
+  let 
+    go :: DSum k f -> DMap k f -> DMap k f -> DSum k f :*: DMap k f
+    go s Tip r = s :*: r
+    go s (Bin _ k1 x1 ll lr) r =
+      let !(km :*: l') = go (k1 :=> x1) ll lr
+      in (km :*: balance s l' r)
+    in Just $! toPair $ go (k0 :=> x0) l0 r0
 
 -- | /O(log n)/. Retrieves the maximal (key :=> value) entry of the map, and
 -- the map stripped of that element, or 'Nothing' if passed an empty map.
 maxViewWithKey :: forall k f . DMap k f -> Maybe (DSum k f, DMap k f)
 maxViewWithKey Tip = Nothing
-maxViewWithKey (Bin _ k0 x0 l0 r0) = Just $! toPair $ go k0 x0 l0 r0
+maxViewWithKey (Bin _ k0 x0 l0 r0) = Just $! toPair $ go (k0 :=> x0) l0 r0
   where
-    go :: k v -> f v -> DMap k f -> DMap k f -> DSum k f :*: DMap k f
-    go k x l Tip = (k :=> x) :*: l
-    go k x l (Bin _ kr xr rl rr) =
-      let !(km :*: r') = go kr xr rl rr
-      in (km :*: balance k x l r')
-
+    go :: DSum k f -> DMap k f -> DMap k f -> DSum k f :*: DMap k f
+    go kx l Tip = kx :*: l
+    go kx l (Bin _ kr xr rl rr) =
+      let !(km :*: r') = go (kr :=> xr)  rl rr
+      in (km :*: balance kx l r')
 -- | /O(log n)/. Delete and find the maximal element.
 --
 -- > deleteFindMax (fromList [(5,"a"), (3,"b"), (10,"c")]) == ((10,"c"), fromList [(3,"b"), (5,"a")])
@@ -237,7 +234,7 @@ deleteFindMax :: DMap k f -> (DSum k f, DMap k f)
 deleteFindMax t
   = case t of
       Bin _ k x l Tip -> (k :=> x,l)
-      Bin _ k x l r   -> let (km,r') = deleteFindMax r in (km,balance k x l r')
+      Bin _ k x l r   -> let (km,r') = deleteFindMax r in (km,balance (k :=> x) l r')
       Tip             -> (error "Map.deleteFindMax: can not return the maximal element of an empty map", Tip)
 
 
@@ -275,11 +272,11 @@ delta,ratio :: Int
 delta = 4
 ratio = 2
 
-balance :: k v -> f v -> DMap k f -> DMap k f -> DMap k f
-balance k x l r
+balance :: DSum k f  -> DMap k f -> DMap k f -> DMap k f
+balance kx@(k :=> x) l r
   | sizeL + sizeR <= 1    = Bin sizeX k x l r
-  | sizeR >= delta*sizeL  = rotateL k x l r
-  | sizeL >= delta*sizeR  = rotateR k x l r
+  | sizeR >= delta*sizeL  = rotateL kx l r
+  | sizeL >= delta*sizeR  = rotateR kx l r
   | otherwise             = Bin sizeX k x l r
   where
     sizeL = size l
@@ -287,36 +284,38 @@ balance k x l r
     sizeX = sizeL + sizeR + 1
 
 -- rotate
-rotateL :: k v -> f v -> DMap k f -> DMap k f -> DMap k f
-rotateL k x l r@(Bin _ _ _ ly ry)
-  | size ly < ratio*size ry = singleL k x l r
-  | otherwise               = doubleL k x l r
-rotateL _ _ _ Tip = error "rotateL Tip"
+rotateL :: DSum k f -> DMap k f -> DMap k f -> DMap k f
+rotateL kx l r@(Bin _ _ _ ly ry)
+  | size ly < ratio*size ry = singleL kx l r
+  | otherwise               = doubleL kx l r
+rotateL  _ _ Tip = error "rotateL Tip"
 
-rotateR :: k v -> f v -> DMap k f -> DMap k f -> DMap k f
-rotateR k x l@(Bin _ _ _ ly ry) r
-  | size ry < ratio*size ly = singleR k x l r
-  | otherwise               = doubleR k x l r
-rotateR _ _ Tip _ = error "rotateR Tip"
+rotateR :: DSum k f  -> DMap k f -> DMap k f -> DMap k f
+rotateR kx l@(Bin _ _ _ ly ry) r
+  | size ry < ratio*size ly = singleR kx l r
+  | otherwise               = doubleR kx l r
+rotateR  _ Tip _ = error "rotateR Tip"
 
 -- basic rotations
-singleL, singleR :: k v -> f v -> DMap k f -> DMap k f -> DMap k f
-singleL k1 x1 t1 (Bin _ k2 x2 t2 t3)  = bin k2 x2 (bin k1 x1 t1 t2) t3
-singleL _ _ _ Tip = error "singleL Tip"
-singleR k1 x1 (Bin _ k2 x2 t1 t2) t3  = bin k2 x2 t1 (bin k1 x1 t2 t3)
-singleR _ _ Tip _ = error "singleR Tip"
+singleL, singleR :: DSum k f -> DMap k f -> DMap k f -> DMap k f
+singleL k1x1 t1 (Bin _ k2 x2 t2 t3)  = bin (k2 :=> x2) (bin k1x1 t1 t2) t3
+singleL  _ _ Tip = error "singleL Tip"
+singleR k1x1 (Bin _ k2 x2 t1 t2) t3  = bin (k2 :=> x2) t1 (bin k1x1 t2 t3)
+singleR  _ Tip _ = error "singleR Tip"
 
-doubleL, doubleR :: k v -> f v -> DMap k f -> DMap k f -> DMap k f
-doubleL k1 x1 t1 (Bin _ k2 x2 (Bin _ k3 x3 t2 t3) t4) = bin k3 x3 (bin k1 x1 t1 t2) (bin k2 x2 t3 t4)
-doubleL _ _ _ _ = error "doubleL"
-doubleR k1 x1 (Bin _ k2 x2 t1 (Bin _ k3 x3 t2 t3)) t4 = bin k3 x3 (bin k2 x2 t1 t2) (bin k1 x1 t3 t4)
-doubleR _ _ _ _ = error "doubleR"
+doubleL, doubleR :: DSum  k f  -> DMap k f -> DMap k f -> DMap k f
+doubleL k1x1 t1 (Bin _ k2 x2 (Bin _ k3 x3 t2 t3) t4) 
+    = bin (k3 :=> x3) (bin k1x1 t1 t2) (bin (k2 :=> x2) t3 t4)
+doubleL  _ _ _ = error "doubleL"
+doubleR k1x1 (Bin _ k2 x2 t1 (Bin _ k3 x3 t2 t3)) t4 
+    = bin (k3 :=> x3) (bin (k2 :=> x2) t1 t2) (bin k1x1 t3 t4)
+doubleR _ _ _ = error "doubleR"
 
 {--------------------------------------------------------------------
   The bin constructor maintains the size of the tree
 --------------------------------------------------------------------}
-bin :: k v -> f v -> DMap k f -> DMap k f -> DMap k f
-bin k x l r
+bin :: DSum k f -> DMap k f -> DMap k f -> DMap k f
+bin (k :=> x) l r
   = Bin (size l + size r + 1) k x l r
 
 {--------------------------------------------------------------------
@@ -370,7 +369,7 @@ filterGt cmp = go
   where
     go Tip              = Tip
     go (Bin _ kx x l r) = case cmp (This kx) of
-              LT -> combine kx x (go l) r
+              LT -> combine (kx :=> x) (go l) r
               GT -> go r
               EQ -> r
 
@@ -380,5 +379,5 @@ filterLt cmp = go
     go Tip              = Tip
     go (Bin _ kx x l r) = case cmp (This kx) of
           LT -> go l
-          GT -> combine kx x l (go r)
+          GT -> combine (kx :=> x) l (go r)
           EQ -> l

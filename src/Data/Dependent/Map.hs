@@ -239,20 +239,20 @@ findWithDefault def k m = case lookup k m of
 -- If the key is already present in the map, the associated value is
 -- replaced with the supplied value. 'insert' is equivalent to
 -- @'insertWith' 'const'@.
-insert :: forall k f v. GCompare k => k v -> f v -> DMap k f -> DMap k f
+insert :: forall k f v. DSumC v => GCompare k => k v -> f v -> DMap k f -> DMap k f
 insert kx x = kx `seq` go
     where
         go :: DMap k f -> DMap k f
-        go Tip = singleton kx x
+        go Tip = singleton (kx :=> x)
         go t@(Bin sz ky y l r) = case gcompare kx ky of
             GLT -> let !l' = go l
                    in if l' `ptrEq` l
                       then t
-                      else balance ky y l' r
+                      else balance (ky :=> y) l' r
             GGT -> let !r' = go r
                    in if r' `ptrEq` r
                       then t
-                      else balance ky y l r'
+                      else balance (ky :=> y) l r'
             GEQ
               | kx `ptrEq` ky && x `ptrEq` y -> t
               | otherwise -> Bin sz kx x l r
@@ -260,20 +260,20 @@ insert kx x = kx `seq` go
 -- | /O(log n)/. Insert a new key and value in the map if the key
 -- is not already present. If the key is already present, @insertR@
 -- does nothing.
-insertR :: forall k f v. GCompare k => k v -> f v -> DMap k f -> DMap k f
+insertR :: forall k f v. DSumC v => GCompare k => k v -> f v -> DMap k f -> DMap k f
 insertR kx x = kx `seq` go
     where
         go :: DMap k f -> DMap k f
-        go Tip = singleton kx x
+        go Tip = singleton (kx :=> x)
         go t@(Bin sz ky y l r) = case gcompare kx ky of
             GLT -> let !l' = go l
                    in if l' `ptrEq` l
                       then t
-                      else balance ky y l' r
+                      else balance (ky :=> y) l' r
             GGT -> let !r' = go r
                    in if r' `ptrEq` r
                    then t
-                   else balance ky y l r'
+                   else balance (ky :=> y) l r'
             GEQ -> t
 
 -- | /O(log n)/. Insert with a function, combining new value and old value.
@@ -281,12 +281,12 @@ insertR kx x = kx `seq` go
 -- will insert the entry @key :=> value@ into @mp@ if key does
 -- not exist in the map. If the key does exist, the function will
 -- insert the entry @key :=> f new_value old_value@.
-insertWith :: GCompare k => (f v -> f v -> f v) -> k v -> f v -> DMap k f -> DMap k f
+insertWith :: DSumC v => GCompare k => (f v -> f v -> f v) -> k v -> f v -> DMap k f -> DMap k f
 insertWith f = insertWithKey (\_ x' y' -> f x' y')
 
 -- | Same as 'insertWith', but the combining function is applied strictly.
 -- This is often the most desirable behavior.
-insertWith' :: GCompare k => (f v -> f v -> f v) -> k v -> f v -> DMap k f -> DMap k f
+insertWith' :: GCompare k => DSumC v => (f v -> f v -> f v) -> k v -> f v -> DMap k f -> DMap k f
 insertWith' f = insertWithKey' (\_ x' y' -> f x' y')
 
 -- | /O(log n)/. Insert with a function, combining key, new value and old value.
@@ -295,60 +295,60 @@ insertWith' f = insertWithKey' (\_ x' y' -> f x' y')
 -- not exist in the map. If the key does exist, the function will
 -- insert the entry @key :=> f key new_value old_value@.
 -- Note that the key passed to f is the same key passed to 'insertWithKey'.
-insertWithKey :: forall k f v. GCompare k => (k v -> f v -> f v -> f v) -> k v -> f v -> DMap k f -> DMap k f
+insertWithKey :: forall k f v. DSumC v => GCompare k => (k v -> f v -> f v -> f v) -> k v -> f v -> DMap k f -> DMap k f
 insertWithKey f kx x = kx `seq` go
   where
     go :: DMap k f -> DMap k f
-    go Tip = singleton kx x
+    go Tip = singleton (kx :=> x)
     go (Bin sy ky y l r) =
         case gcompare kx ky of
-            GLT -> balance ky y (go l) r
-            GGT -> balance ky y l (go r)
+            GLT -> balance (ky :=> y) (go l) r
+            GGT -> balance (ky :=> y) l (go r)
             GEQ -> Bin sy kx (f kx x y) l r
 
 -- | Same as 'insertWithKey', but the combining function is applied strictly.
-insertWithKey' :: forall k f v. GCompare k => (k v -> f v -> f v -> f v) -> k v -> f v -> DMap k f -> DMap k f
+insertWithKey' :: forall k f v. DSumC v => GCompare k => (k v -> f v -> f v -> f v) -> k v -> f v -> DMap k f -> DMap k f
 insertWithKey' f kx x = kx `seq` go
   where
     go :: DMap k f -> DMap k f
-    go Tip = singleton kx $! x
+    go Tip = singleton $ (:=>) kx $! x
     go (Bin sy ky y l r) =
         case gcompare kx ky of
-            GLT -> balance ky y (go l) r
-            GGT -> balance ky y l (go r)
+            GLT -> balance (ky :=> y) (go l) r
+            GGT -> balance (ky :=> y) l (go r)
             GEQ -> let x' = f kx x y in seq x' (Bin sy kx x' l r)
 
 -- | /O(log n)/. Combines insert operation with old value retrieval.
 -- The expression (@'insertLookupWithKey' f k x map@)
 -- is a pair where the first element is equal to (@'lookup' k map@)
 -- and the second element equal to (@'insertWithKey' f k x map@).
-insertLookupWithKey :: forall k f v. GCompare k => (k v -> f v -> f v -> f v) -> k v -> f v -> DMap k f
+insertLookupWithKey :: forall k f v. DSumC v => GCompare k => (k v -> f v -> f v -> f v) -> k v -> f v -> DMap k f
                     -> (Maybe (f v), DMap k f)
 insertLookupWithKey f kx x = kx `seq` go
   where
     go :: DMap k f -> (Maybe (f v), DMap k f)
-    go Tip = (Nothing, singleton kx x)
+    go Tip = (Nothing, singleton $ kx :=> x)
     go (Bin sy ky y l r) =
         case gcompare kx ky of
             GLT -> let (found, l') = go l
-                  in (found, balance ky y l' r)
+                  in (found, balance (ky :=> y) l' r)
             GGT -> let (found, r') = go r
-                  in (found, balance ky y l r')
+                  in (found, balance (ky :=> y) l r')
             GEQ -> (Just y, Bin sy kx (f kx x y) l r)
 
 -- | /O(log n)/. A strict version of 'insertLookupWithKey'.
-insertLookupWithKey' :: forall k f v. GCompare k => (k v -> f v -> f v -> f v) -> k v -> f v -> DMap k f
+insertLookupWithKey' :: forall k f v. DSumC v => GCompare k => (k v -> f v -> f v -> f v) -> k v -> f v -> DMap k f
                      -> (Maybe (f v), DMap k f)
 insertLookupWithKey' f kx x = kx `seq` go
   where
     go :: DMap k f -> (Maybe (f v), DMap k f)
-    go Tip = x `seq` (Nothing, singleton kx x)
+    go Tip = x `seq` (Nothing, singleton $ kx :=> x)
     go (Bin sy ky y l r) =
         case gcompare kx ky of
             GLT -> let (found, l') = go l
-                  in (found, balance ky y l' r)
+                  in (found, balance (ky :=> y) l' r)
             GGT -> let (found, r') = go r
-                  in (found, balance ky y l r')
+                  in (found, balance (ky :=> y) l r')
             GEQ -> let x' = f kx x y in x' `seq` (Just y, Bin sy kx x' l r)
 
 {--------------------------------------------------------------------
@@ -365,22 +365,22 @@ delete k = k `seq` go
     go Tip = Tip
     go (Bin _ kx x l r) =
         case gcompare k kx of
-            GLT -> balance kx x (go l) r
-            GGT -> balance kx x l (go r)
+            GLT -> balance (kx :=> x) (go l) r
+            GGT -> balance (kx :=> x) l (go r)
             GEQ -> glue l r
 
 -- | /O(log n)/. Update a value at a specific key with the result of the provided function.
 -- When the key is not
 -- a member of the map, the original map is returned.
-adjust :: GCompare k => (f v -> f v) -> k v -> DMap k f -> DMap k f
+adjust :: GCompare k => DSumC v => (f v -> f v) -> k v -> DMap k f -> DMap k f
 adjust f = adjustWithKey (\_ x -> f x)
 
 -- | /O(log n)/. Adjust a value at a specific key. When the key is not
 -- a member of the map, the original map is returned.
-adjustWithKey :: GCompare k => (k v -> f v -> f v) -> k v -> DMap k f -> DMap k f
+adjustWithKey :: GCompare k => DSumC v => (k v -> f v -> f v) -> k v -> DMap k f -> DMap k f
 adjustWithKey f0 !k0 = go f0 k0
   where
-    go :: GCompare k => (k v -> f v -> f v) -> k v -> DMap k f -> DMap k f
+    go :: DSumC v => GCompare k => (k v -> f v -> f v) -> k v -> DMap k f -> DMap k f
     go _f _k Tip = Tip
     go f k (Bin sx kx x l r) =
       case gcompare k kx of
@@ -389,10 +389,10 @@ adjustWithKey f0 !k0 = go f0 k0
         GEQ -> Bin sx kx (f kx x) l r
 
 -- | /O(log n)/. A strict version of 'adjustWithKey'.
-adjustWithKey' :: GCompare k => (k v -> f v -> f v) -> k v -> DMap k f -> DMap k f
+adjustWithKey' :: DSumC v => GCompare k => (k v -> f v -> f v) -> k v -> DMap k f -> DMap k f
 adjustWithKey' f0 !k0 = go f0 k0
   where
-    go :: GCompare k => (k v -> f v -> f v) -> k v -> DMap k f -> DMap k f
+    go :: DSumC v => GCompare k => (k v -> f v -> f v) -> k v -> DMap k f -> DMap k f
     go _f _k Tip = Tip
     go f k (Bin sx kx x l r) =
       case gcompare k kx of
@@ -403,22 +403,22 @@ adjustWithKey' f0 !k0 = go f0 k0
 -- | /O(log n)/. The expression (@'update' f k map@) updates the value @x@
 -- at @k@ (if it is in the map). If (@f x@) is 'Nothing', the element is
 -- deleted. If it is (@'Just' y@), the key @k@ is bound to the new value @y@.
-update :: GCompare k => (f v -> Maybe (f v)) -> k v -> DMap k f -> DMap k f
+update :: GCompare k => DSumC v => (f v -> Maybe (f v)) -> k v -> DMap k f -> DMap k f
 update f = updateWithKey (\_ x -> f x)
 
 -- | /O(log n)/. The expression (@'updateWithKey' f k map@) updates the
 -- value @x@ at @k@ (if it is in the map). If (@f k x@) is 'Nothing',
 -- the element is deleted. If it is (@'Just' y@), the key @k@ is bound
 -- to the new value @y@.
-updateWithKey :: forall k f v. GCompare k => (k v -> f v -> Maybe (f v)) -> k v -> DMap k f -> DMap k f
+updateWithKey :: forall k f v. DSumC v => GCompare k => (k v -> f v -> Maybe (f v)) -> k v -> DMap k f -> DMap k f
 updateWithKey f k = k `seq` go
   where
     go :: DMap k f -> DMap k f
     go Tip = Tip
     go (Bin sx kx x l r) =
         case gcompare k kx of
-           GLT -> balance kx x (go l) r
-           GGT -> balance kx x l (go r)
+           GLT -> balance (kx :=> x) (go l) r
+           GGT -> balance (kx :=> x) l (go r)
            GEQ -> case f kx x of
                    Just x' -> Bin sx kx x' l r
                    Nothing -> glue l r
@@ -426,15 +426,15 @@ updateWithKey f k = k `seq` go
 -- | /O(log n)/. Lookup and update. See also 'updateWithKey'.
 -- The function returns changed value, if it is updated.
 -- Returns the original key value if the map entry is deleted. 
-updateLookupWithKey :: forall k f v. GCompare k => (k v -> f v -> Maybe (f v)) -> k v -> DMap k f -> (Maybe (f v), DMap k f)
+updateLookupWithKey :: forall k f v. DSumC v => GCompare k => (k v -> f v -> Maybe (f v)) -> k v -> DMap k f -> (Maybe (f v), DMap k f)
 updateLookupWithKey f k = k `seq` go
  where
    go :: DMap k f -> (Maybe (f v), DMap k f)
    go Tip = (Nothing,Tip)
    go (Bin sx kx x l r) =
           case gcompare k kx of
-               GLT -> let (found,l') = go l in (found,balance kx x l' r)
-               GGT -> let (found,r') = go r in (found,balance kx x l r') 
+               GLT -> let (found,l') = go l in (found,balance (kx :=> x) l' r)
+               GGT -> let (found,r') = go r in (found,balance (kx :=> x) l r') 
                GEQ -> case f kx x of
                        Just x' -> (Just x',Bin sx kx x' l r)
                        Nothing -> (Just x,glue l r)
@@ -442,17 +442,17 @@ updateLookupWithKey f k = k `seq` go
 -- | /O(log n)/. The expression (@'alter' f k map@) alters the value @x@ at @k@, or absence thereof.
 -- 'alter' can be used to insert, delete, or update a value in a 'Map'.
 -- In short : @'lookup' k ('alter' f k m) = f ('lookup' k m)@.
-alter :: forall k f v. GCompare k => (Maybe (f v) -> Maybe (f v)) -> k v -> DMap k f -> DMap k f
+alter :: forall k f v. DSumC v => GCompare k => (Maybe (f v) -> Maybe (f v)) -> k v -> DMap k f -> DMap k f
 alter f k = k `seq` go
   where
     go :: DMap k f -> DMap k f
     go Tip = case f Nothing of
                Nothing -> Tip
-               Just x  -> singleton k x
+               Just x  -> singleton $ k :=> x
 
     go (Bin sx kx x l r) = case gcompare k kx of
-               GLT -> balance kx x (go l) r
-               GGT -> balance kx x l (go r)
+               GLT -> balance (kx :=> x) (go l) r
+               GGT -> balance (kx :=> x) l (go r)
                GEQ -> case f (Just x) of
                        Just x' -> Bin sx kx x' l r
                        Nothing -> glue l r
@@ -497,13 +497,13 @@ elemAt i (Bin _ kx x l r)
 
 -- | /O(log n)/. Update the element at /index/. Does nothing when an
 -- invalid index is used.
-updateAt :: (forall v. k v -> f v -> Maybe (f v)) -> Int -> DMap k f -> DMap k f
+updateAt :: (forall v. DSumC v => k v -> f v -> Maybe (f v)) -> Int -> DMap k f -> DMap k f
 updateAt f i0 t = i0 `seq` go i0 t
  where
     go _ Tip  = Tip
     go i (Bin sx kx x l r) = case compare i sizeL of
-      LT -> balance kx x (go i l) r
-      GT -> balance kx x l (go (i-sizeL-1) r)
+      LT -> balance (kx :=> x) (go i l) r
+      GT -> balance (kx :=> x) l (go (i-sizeL-1) r)
       EQ -> case f kx x of
               Just x' -> Bin sx kx x' l r
               Nothing -> glue l r
@@ -530,11 +530,11 @@ findMin m = case lookupMin m of
 lookupMin :: DMap k f -> Maybe (DSum k f)
 lookupMin m = case m of
       Tip -> Nothing
-      Bin _ kx x l _ -> Just $! go kx x l
+      Bin _ kx x l _ -> Just $! go (kx :=> x) l
   where
-    go :: k v -> f v -> DMap k f -> DSum k f
-    go kx x Tip = kx :=> x
-    go _  _ (Bin _ kx x l _) = go kx x l
+    go :: DSum k f -> DMap k f -> DSum k f
+    go kx  Tip = kx 
+    go _  (Bin _ kx x l _) = go (kx :=>  x) l
 
 -- | /O(log n)/. The maximal key of the map. Calls 'error' is the map is empty.
 findMax :: DMap k f -> DSum k f
@@ -545,42 +545,42 @@ findMax m = case lookupMax m of
 lookupMax :: DMap k f -> Maybe (DSum k f)
 lookupMax m = case m of
       Tip -> Nothing
-      Bin _ kx x _ r -> Just $! go kx x r
+      Bin _ kx x _ r -> Just $! go (kx :=> x) r
   where
-    go :: k v -> f v -> DMap k f -> DSum k f
-    go kx x Tip = kx :=> x
-    go _  _ (Bin _ kx x _ r) = go kx x r
+    go :: DSum k f -> DMap k f -> DSum k f
+    go kx Tip = kx 
+    go   _ (Bin _ kx x _ r) = go (kx :=> x) r
 
 -- | /O(log n)/. Delete the minimal key. Returns an empty map if the map is empty.
 deleteMin :: DMap k f -> DMap k f
 deleteMin (Bin _ _  _ Tip r)  = r
-deleteMin (Bin _ kx x l r)    = balance kx x (deleteMin l) r
+deleteMin (Bin _ kx x l r)    = balance (kx :=>  x) (deleteMin l) r
 deleteMin Tip                 = Tip
 
 -- | /O(log n)/. Delete the maximal key. Returns an empty map if the map is empty.
 deleteMax :: DMap k f -> DMap k f
 deleteMax (Bin _ _  _ l Tip)  = l
-deleteMax (Bin _ kx x l r)    = balance kx x l (deleteMax r)
+deleteMax (Bin _ kx x l r)    = balance (kx :=> x) l (deleteMax r)
 deleteMax Tip                 = Tip
 
 -- | /O(log n)/. Update the value at the minimal key.
-updateMinWithKey :: (forall v. k v -> f v -> Maybe (f v)) -> DMap k f -> DMap k f
+updateMinWithKey :: (forall v. DSumC v => k v -> f v -> Maybe (f v)) -> DMap k f -> DMap k f
 updateMinWithKey f = go
  where
     go (Bin sx kx x Tip r) = case f kx x of
                                   Nothing -> r
                                   Just x' -> Bin sx kx x' Tip r
-    go (Bin _ kx x l r)    = balance kx x (go l) r
+    go (Bin _ kx x l r)    = balance (kx :=> x) (go l) r
     go Tip                 = Tip
 
 -- | /O(log n)/. Update the value at the maximal key.
-updateMaxWithKey :: (forall v. k v -> f v -> Maybe (f v)) -> DMap k f -> DMap k f
+updateMaxWithKey :: (forall v. DSumC v => k v -> f v -> Maybe (f v)) -> DMap k f -> DMap k f
 updateMaxWithKey f = go
  where
     go (Bin sx kx x l Tip) = case f kx x of
                               Nothing -> l
                               Just x' -> Bin sx kx x' l Tip
-    go (Bin _ kx x l r)    = balance kx x l (go r)
+    go (Bin _ kx x l r)    = balance (kx :=> x) l (go r)
     go Tip                 = Tip
 
 {--------------------------------------------------------------------
@@ -595,7 +595,7 @@ unions ts
 
 -- | The union of a list of maps, with a combining operation:
 --   (@'unionsWithKey' f == 'Prelude.foldl' ('unionWithKey' f) 'empty'@).
-unionsWithKey :: GCompare k => (forall v. k v -> f v -> f v -> f v) -> [DMap k f] -> DMap k f
+unionsWithKey :: GCompare k => (forall v. DSumC v => k v -> f v -> f v -> f v) -> [DMap k f] -> DMap k f
 unionsWithKey f ts
   = foldlStrict (unionWithKey f) empty ts
 
@@ -611,7 +611,7 @@ union (Bin _ kx x Tip Tip) t2 = insert kx x t2
 union t1@(Bin _ k1 x1 l1 r1) t2 = case split k1 t2 of
   (l2, r2)
     | l1 `ptrEq` l1l2 && r1 `ptrEq` r1r2 -> t1
-    | otherwise -> combine k1 x1 l1l2 r1r2
+    | otherwise -> combine (k1 :=> x1) l1l2 r1r2
     where !l1l2 = l1 `union` l2
           !r1r2 = r1 `union` r2
 
@@ -621,13 +621,13 @@ union t1@(Bin _ k1 x1 l1 r1) t2 = case split k1 t2 of
 
 -- | /O(n+m)/.
 -- Union with a combining function.
-unionWithKey :: GCompare k => (forall v. k v -> f v -> f v -> f v) -> DMap k f -> DMap k f -> DMap k f
+unionWithKey :: GCompare k => (forall v. DSumC v => k v -> f v -> f v -> f v) -> DMap k f -> DMap k f -> DMap k f
 unionWithKey _ t1 Tip  = t1
 unionWithKey _ Tip t2  = t2
 unionWithKey f (Bin _ k1 x1 l1 r1) t2 = case splitLookup k1 t2 of
   (l2, mx2, r2) -> case mx2 of
-      Nothing -> combine k1 x1 l1l2 r1r2
-      Just x2 -> combine k1 (f k1 x1 x2) l1l2 r1r2
+      Nothing -> combine (k1 :=> x1) l1l2 r1r2
+      Just x2 -> combine (k1 :=> f k1 x1 x2) l1l2 r1r2
     where !l1l2 = unionWithKey f l1 l2
           !r1r2 = unionWithKey f r1 r2
 
@@ -652,15 +652,15 @@ difference t1 (Bin _ k2 _x2 l2 r2) = case split k2 t1 of
 -- encountered, the combining function is applied to the key and both values.
 -- If it returns 'Nothing', the element is discarded (proper set difference). If
 -- it returns (@'Just' y@), the element is updated with a new value @y@. 
-differenceWithKey :: GCompare k => (forall v. k v -> f v -> g v -> Maybe (f v)) -> DMap k f -> DMap k g -> DMap k f
+differenceWithKey :: GCompare k => (forall v. DSumC v => k v -> f v -> g v -> Maybe (f v)) -> DMap k f -> DMap k g -> DMap k f
 differenceWithKey _ Tip _   = Tip
 differenceWithKey _ t1 Tip  = t1
 differenceWithKey f (Bin _ k1 x1 l1 r1) t2 = case splitLookup k1 t2 of
   (l2, mx2, r2) -> case mx2 of
-      Nothing -> combine k1 x1 l1l2 r1r2
+      Nothing -> combine (k1 :=> x1) l1l2 r1r2
       Just x2 -> case f k1 x1 x2 of
         Nothing -> merge l1l2 r1r2
-        Just x1x2 -> combine k1 x1x2 l1l2 r1r2
+        Just x1x2 -> combine (k1 :=> x1x2) l1l2 r1r2
     where !l1l2 = differenceWithKey f l1 l2
           !r1r2 = differenceWithKey f r1 r2
 
@@ -681,11 +681,11 @@ intersection t1@(Bin s1 k1 x1 l1 r1) t2 =
   in if found
      then if l1l2 `ptrEq` l1 && r1r2 `ptrEq` r1
           then t1
-          else combine k1 x1 l1l2 r1r2
+          else combine (k1 :=> x1) l1l2 r1r2
      else merge l1l2 r1r2
 
 -- | /O(m * log (n\/m + 1), m <= n/. Intersection with a combining function.
-intersectionWithKey :: GCompare k => (forall v. k v -> f v -> g v -> h v) -> DMap k f -> DMap k g -> DMap k h
+intersectionWithKey :: GCompare k => (forall v. DSumC v => k v -> f v -> g v -> h v) -> DMap k f -> DMap k g -> DMap k h
 intersectionWithKey _ Tip _ = Tip
 intersectionWithKey _ _ Tip = Tip
 intersectionWithKey f (Bin s1 k1 x1 l1 r1) t2 =
@@ -694,7 +694,7 @@ intersectionWithKey f (Bin s1 k1 x1 l1 r1) t2 =
       !r1r2 = intersectionWithKey f r1 r2
   in case found of
        Nothing -> merge l1l2 r1r2
-       Just x2 -> combine k1 (f k1 x1 x2) l1l2 r1r2
+       Just x2 -> combine (k1 :=> f k1 x1 x2) l1l2 r1r2
 
 {--------------------------------------------------------------------
   Submap
@@ -710,11 +710,11 @@ isSubmapOf m1 m2 = isSubmapOfBy eqTagged m1 m2
  all keys in @t1@ are in tree @t2@, and when @f@ returns 'True' when
  applied to their respective keys and values.
 -}
-isSubmapOfBy :: GCompare k => (forall v. k v -> k v -> f v -> g v -> Bool) -> DMap k f -> DMap k g -> Bool
+isSubmapOfBy :: GCompare k => (forall v. DSumC v => k v -> k v -> f v -> g v -> Bool) -> DMap k f -> DMap k g -> Bool
 isSubmapOfBy f t1 t2
   = (size t1 <= size t2) && (submap' f t1 t2)
 
-submap' :: GCompare k => (forall v. k v -> k v -> f v -> g v -> Bool) -> DMap k f -> DMap k g -> Bool
+submap' :: GCompare k => (forall v. DSumC v => k v -> k v -> f v -> g v -> Bool) -> DMap k f -> DMap k g -> Bool
 submap' _ Tip _ = True
 submap' _ _ Tip = False
 submap' f (Bin _ kx x l r) t
@@ -736,7 +736,7 @@ isProperSubmapOf m1 m2
  all keys in @m1@ are in @m2@, and when @f@ returns 'True' when
  applied to their respective keys and values. 
 -}
-isProperSubmapOfBy :: GCompare k => (forall v. k v -> k v -> f v -> g v -> Bool) -> DMap k f -> DMap k g -> Bool
+isProperSubmapOfBy :: GCompare k => (forall v. DSumC v => k v -> k v -> f v -> g v -> Bool) -> DMap k f -> DMap k g -> Bool
 isProperSubmapOfBy f t1 t2
   = (size t1 < size t2) && (submap' f t1 t2)
 
@@ -752,7 +752,7 @@ filterWithKey p = go
     go t@(Bin _ kx x l r)
       | p kx x    = if l' `ptrEq` l && r' `ptrEq` r
                     then t
-                    else combine kx x l' r'
+                    else combine (kx :=> x) l' r'
       | otherwise = merge l' r'
       where !l' = go l
             !r' = go r
@@ -766,33 +766,33 @@ partitionWithKey p0 m0 = toPair (go p0 m0)
     go :: GCompare k => (forall v. k v -> f v -> Bool) -> DMap k f -> (DMap k f :*: DMap k f)
     go _ Tip = (Tip :*: Tip)
     go p (Bin _ kx x l r)
-      | p kx x    = (combine kx x l1 r1 :*: merge l2 r2)
-      | otherwise = (merge l1 r1 :*: combine kx x l2 r2)
+      | p kx x    = (combine (kx :=> x) l1 r1 :*: merge l2 r2)
+      | otherwise = (merge l1 r1 :*: combine (kx :=> x) l2 r2)
       where
         (l1 :*: l2) = go p l
         (r1 :*: r2) = go p r
 
 -- | /O(n)/. Map keys\/values and collect the 'Just' results.
-mapMaybeWithKey :: GCompare k => (forall v. k v -> f v -> Maybe (g v)) -> DMap k f -> DMap k g
+mapMaybeWithKey :: GCompare k => (forall v. DSumC v =>  k v -> f v -> Maybe (g v)) -> DMap k f -> DMap k g
 mapMaybeWithKey f = go
   where
     go Tip = Tip
     go (Bin _ kx x l r) = case f kx x of
-        Just y  -> combine kx y (go l) (go r)
+        Just y  -> combine (kx :=> y) (go l) (go r)
         Nothing -> merge (go l) (go r)
 
 -- | /O(n)/. Map keys\/values and separate the 'Left' and 'Right' results.
 mapEitherWithKey :: GCompare k =>
-  (forall v. k v -> f v -> Either (g v) (h v)) -> DMap k f -> (DMap k g, DMap k h)
+  (forall v. DSumC v => k v -> f v -> Either (g v) (h v)) -> DMap k f -> (DMap k g, DMap k h)
 mapEitherWithKey f0 = toPair . go f0
   where
     go :: GCompare k
-       => (forall v. k v -> f v -> Either (g v) (h v))
+       => (forall v. DSumC v => k v -> f v -> Either (g v) (h v))
        -> DMap k f -> (DMap k g :*: DMap k h)
     go _ Tip = (Tip :*: Tip)
     go f (Bin _ kx x l r) = case f kx x of
-      Left y  -> (combine kx y l1 r1 :*: merge l2 r2)
-      Right z -> (merge l1 r1 :*: combine kx z l2 r2)
+      Left y  -> (combine (kx :=> y) l1 r1 :*: merge l2 r2)
+      Right z -> (merge l1 r1 :*: combine (kx :=> z) l2 r2)
       where
         (l1,l2) = mapEitherWithKey f l
         (r1,r2) = mapEitherWithKey f r
@@ -802,14 +802,14 @@ mapEitherWithKey f0 = toPair . go f0
 --------------------------------------------------------------------}
 
 -- | /O(n)/. Map a function over all values in the map.
-map :: (forall v. f v -> g v) -> DMap k f -> DMap k g
+map :: (forall v. DSumC v => f v -> g v) -> DMap k f -> DMap k g
 map f = go
   where
     go Tip = Tip
     go (Bin sx kx x l r) = Bin sx kx (f x) (go l) (go r)
 
 -- | /O(n)/. Map a function over all values in the map.
-mapWithKey :: (forall v. k v -> f v -> g v) -> DMap k f -> DMap k g
+mapWithKey :: (forall v. DSumC v => k v -> f v -> g v) -> DMap k f -> DMap k g
 mapWithKey f = go
   where
     go Tip = Tip
@@ -819,7 +819,7 @@ mapWithKey f = go
 -- @'traverseWithKey' f m == 'fromList' <$> 'traverse' (\(k, v) -> (,) k <$> f k v) ('toList' m)@
 -- That is, behaves exactly like a regular 'traverse' except that the traversing
 -- function also has access to the key associated with a value.
-traverseWithKey :: Applicative t => (forall v. k v -> f v -> t (g v)) -> DMap k f -> t (DMap k g)
+traverseWithKey :: Applicative t => (forall v. DSumC v => k v -> f v -> t (g v)) -> DMap k f -> t (DMap k g)
 traverseWithKey f = go
   where
     go Tip = pure Tip
@@ -828,7 +828,7 @@ traverseWithKey f = go
 
 -- | /O(n)/. The function 'mapAccumLWithKey' threads an accumulating
 -- argument throught the map in ascending order of keys.
-mapAccumLWithKey :: (forall v. a -> k v -> f v -> (a, g v)) -> a -> DMap k f -> (a, DMap k g)
+mapAccumLWithKey :: (forall v. DSumC v => a -> k v -> f v -> (a, g v)) -> a -> DMap k f -> (a, DMap k g)
 mapAccumLWithKey f = go
   where
     go a Tip               = (a,Tip)
@@ -840,7 +840,7 @@ mapAccumLWithKey f = go
 
 -- | /O(n)/. The function 'mapAccumRWithKey' threads an accumulating
 -- argument through the map in descending order of keys.
-mapAccumRWithKey :: (forall v. a -> k v -> f v -> (a, g v)) -> a -> DMap k f -> (a, DMap k g)
+mapAccumRWithKey :: (forall v. DSumC v => a -> k v -> f v -> (a, g v)) -> a -> DMap k f -> (a, DMap k g)
 mapAccumRWithKey f = go
   where
     go a Tip = (a,Tip)
@@ -856,7 +856,7 @@ mapAccumRWithKey f = go
 -- The size of the result may be smaller if @f@ maps two or more distinct
 -- keys to the same new key.  In this case the associated values will be
 -- combined using @c@.
-mapKeysWith :: GCompare k2 => (forall v. k2 v -> f v -> f v -> f v) -> (forall v. k1 v -> k2 v) -> DMap k1 f -> DMap k2 f
+mapKeysWith :: GCompare k2 => (forall v. DSumC v => k2 v -> f v -> f v -> f v) -> (forall v. k1 v -> k2 v) -> DMap k1 f -> DMap k2 f
 mapKeysWith c f = fromListWithKey c . Prelude.map fFirst . toList
     where fFirst (x :=> y) = (f x :=> y)
 
@@ -874,7 +874,7 @@ mapKeysWith c f = fromListWithKey c . Prelude.map fFirst . toList
 --
 -- This means that @f@ maps distinct original keys to distinct resulting keys.
 -- This function has better performance than 'mapKeys'.
-mapKeysMonotonic :: (forall v. k1 v -> k2 v) -> DMap k1 f -> DMap k2 f
+mapKeysMonotonic :: (forall v. DSumC v => k1 v -> k2 v) -> DMap k1 f -> DMap k2 f
 mapKeysMonotonic _ Tip = Tip
 mapKeysMonotonic f (Bin sz k x l r) =
     Bin sz (f k) x (mapKeysMonotonic f l) (mapKeysMonotonic f r)
@@ -888,13 +888,13 @@ mapKeysMonotonic f (Bin sz k x l r) =
 --
 -- This is identical to 'foldrWithKey', and you should use that one instead of
 -- this one.  This name is kept for backward compatibility.
-foldWithKey :: (forall v. k v -> f v -> b -> b) -> b -> DMap k f -> b
+foldWithKey :: (forall v. DSumC v => k v -> f v -> b -> b) -> b -> DMap k f -> b
 foldWithKey = foldrWithKey
 {-# DEPRECATED foldWithKey "Use foldrWithKey instead" #-}
 
 -- | /O(n)/. Post-order fold.  The function will be applied from the lowest
 -- value to the highest.
-foldrWithKey :: (forall v. k v -> f v -> b -> b) -> b -> DMap k f -> b
+foldrWithKey :: (forall v. DSumC v => k v -> f v -> b -> b) -> b -> DMap k f -> b
 foldrWithKey f = go
   where
     go z Tip              = z
@@ -902,7 +902,7 @@ foldrWithKey f = go
 
 -- | /O(n)/. Pre-order fold.  The function will be applied from the highest
 -- value to the lowest.
-foldlWithKey :: (forall v. b -> k v -> f v -> b) -> b -> DMap k f -> b
+foldlWithKey :: (forall v. DSumC v => b -> k v -> f v -> b) -> b -> DMap k f -> b
 foldlWithKey f = go
   where
     go z Tip              = z
@@ -951,11 +951,11 @@ fromList xs
     ins t (k :=> x) = insert k x t
 
 -- | /O(n*log n)/. Build a map from a list of key\/value pairs with a combining function. See also 'fromAscListWithKey'.
-fromListWithKey :: GCompare k => (forall v. k v -> f v -> f v -> f v) -> [DSum k f] -> DMap k f
+fromListWithKey :: GCompare k => (forall v. DSumC v => k v -> f v -> f v -> f v) -> [DSum k f] -> DMap k f
 fromListWithKey f xs 
   = foldlStrict (ins f) empty xs
   where
-    ins :: GCompare k => (forall v. k v -> f v -> f v -> f v) -> DMap k f -> DSum k f -> DMap k f
+    ins :: GCompare k => (forall v. DSumC v => k v -> f v -> f v -> f v) -> DMap k f -> DSum k f -> DMap k f
     ins f t (k :=> x) = insertWithKey f k x t
 
 -- | /O(n)/. Convert to a list of key\/value pairs.
@@ -987,18 +987,18 @@ fromAscList xs
 -- | /O(n)/. Build a map from an ascending list in linear time with a
 -- combining function for equal keys.
 -- /The precondition (input list is ascending) is not checked./
-fromAscListWithKey :: GEq k => (forall v. k v -> f v -> f v -> f v) -> [DSum k f] -> DMap k f 
+fromAscListWithKey :: GEq k => (forall v. DSumC v => k v -> f v -> f v -> f v) -> [DSum k f] -> DMap k f 
 fromAscListWithKey f xs
-  = fromDistinctAscList (combineEq f xs)
+  = fromDistinctAscList (combineEq xs)
   where
   -- [combineEq f xs] combines equal elements with function [f] in an ordered list [xs]
-  combineEq _ xs'
+  combineEq xs'
     = case xs' of
         []     -> []
         [x]    -> [x]
         (x:xx) -> combineEq' f x xx
 
-  combineEq' :: GEq k => (forall v. k v -> f v -> f v -> f v) -> DSum k f -> [DSum k f] -> [DSum k f]
+  combineEq' :: GEq k => (forall v. DSumC v => k v -> f v -> f v -> f v) -> DSum k f -> [DSum k f] -> [DSum k f]
   combineEq' f z [] = [z]
   combineEq' f z@(kz :=> zz) (x@(kx :=> xx):xs') =
     case geq kx kz of
@@ -1018,8 +1018,8 @@ fromDistinctAscList xs
     build :: (DMap k f -> [DSum k f] -> b) -> Int -> [DSum k f] -> b
     build c 0 xs'  = c Tip xs'
     build c 5 xs'  = case xs' of
-                       ((k1:=>x1):(k2:=>x2):(k3:=>x3):(k4:=>x4):(k5:=>x5):xx) 
-                            -> c (bin k4 x4 (bin k2 x2 (singleton k1 x1) (singleton k3 x3)) (singleton k5 x5)) xx
+                       ((k1x1):(k2x2):(k3x3):(k4x4):(k5x5):xx) 
+                            -> c (bin k4x4 (bin k2x2 (singleton k1x1) (singleton k3x3)) (singleton k5x5)) xx
                        _ -> error "fromDistinctAscList build"
     build c n xs'  = seq nr $ build (buildR nr c) nl xs'
                    where
@@ -1027,11 +1027,11 @@ fromDistinctAscList xs
                      nr = n - nl - 1
 
     buildR :: Int -> (DMap k f -> [DSum k f] -> b) -> DMap k f -> [DSum k f] -> b
-    buildR n c l ((k:=>x):ys) = build (buildB l k x c) n ys
+    buildR n c l (kx:ys) = build (buildB l kx c) n ys
     buildR _ _ _ []           = error "fromDistinctAscList buildR []"
     
-    buildB :: DMap k f -> k v -> f v -> (DMap k f -> a -> b) -> DMap k f -> a -> b
-    buildB l k x c r zs       = c (bin k x l r) zs
+    buildB :: DMap k f -> DSum k f  -> (DMap k f -> a -> b) -> DMap k f -> a -> b
+    buildB l kx c r zs       = c (bin kx l r) zs
                       
 {--------------------------------------------------------------------
   Split
@@ -1046,8 +1046,8 @@ split k = toPair . go
     go :: DMap k f -> (DMap k f :*: DMap k f)
     go Tip              = (Tip :*: Tip)
     go (Bin _ kx x l r) = case gcompare k kx of
-          GLT -> let !(lt :*: gt) = go l in (lt :*: combine kx x gt r)
-          GGT -> let !(lt :*: gt) = go r in (combine kx x l lt :*: gt)
+          GLT -> let !(lt :*: gt) = go l in (lt :*: combine (kx :=> x) gt r)
+          GGT -> let !(lt :*: gt) = go r in (combine (kx :=>  x) l lt :*: gt)
           GEQ -> (l :*: r)
 {-# INLINABLE split #-}
 
@@ -1059,8 +1059,8 @@ splitLookup k = toTriple . go
     go :: DMap k f -> Triple' (DMap k f) (Maybe (f v)) (DMap k f)
     go Tip              = Triple' Tip Nothing Tip
     go (Bin _ kx x l r) = case gcompare k kx of
-      GLT -> let !(Triple' lt z gt) = go l in Triple' lt z (combine kx x gt r)
-      GGT -> let !(Triple' lt z gt) = go r in Triple' (combine kx x l lt) z gt
+      GLT -> let !(Triple' lt z gt) = go l in Triple' lt z (combine (kx :=> x) gt r)
+      GGT -> let !(Triple' lt z gt) = go r in Triple' (combine (kx :=> x) l lt) z gt
       GEQ -> Triple' l (Just x) r
 
 -- | /O(log n)/. The expression (@'splitMember' k map@) splits a map just
@@ -1071,8 +1071,8 @@ splitMember k = toTriple . go
     go :: DMap k f -> Triple' (DMap k f) Bool (DMap k f)
     go Tip              = Triple' Tip False Tip
     go (Bin _ kx x l r) = case gcompare k kx of
-      GLT -> let !(Triple' lt z gt) = go l in Triple' lt z (combine kx x gt r)
-      GGT -> let !(Triple' lt z gt) = go r in Triple' (combine kx x l lt) z gt
+      GLT -> let !(Triple' lt z gt) = go l in Triple' lt z (combine (kx :=> x) gt r)
+      GGT -> let !(Triple' lt z gt) = go r in Triple' (combine (kx :=> x) l lt) z gt
       GEQ -> Triple' l True r
 
 -- | /O(log n)/.
@@ -1082,8 +1082,8 @@ splitLookupWithKey k = toTriple . go
     go :: DMap k f -> Triple' (DMap k f) (Maybe (k v, f v)) (DMap k f)
     go Tip              = Triple' Tip Nothing Tip
     go (Bin _ kx x l r) = case gcompare k kx of
-      GLT -> let !(Triple' lt z gt) = go l in Triple' lt z (combine kx x gt r)
-      GGT -> let !(Triple' lt z gt) = go r in Triple' (combine kx x l lt) z gt
+      GLT -> let !(Triple' lt z gt) = go l in Triple' lt z (combine (kx :=> x) gt r)
+      GGT -> let !(Triple' lt z gt) = go r in Triple' (combine (kx :=> x) l lt) z gt
       GEQ -> Triple' l (Just (kx, x)) r
 
 {--------------------------------------------------------------------
@@ -1104,7 +1104,7 @@ instance OrdTag k f => Ord (DMap k f) where
 {--------------------------------------------------------------------
   Read
 --------------------------------------------------------------------}
-
+{-
 instance (GCompare k, ReadTag k f) => Read (DMap k f) where
   readPrec = parens $ prec 10 $ do
     Ident "fromList" <- lexP
@@ -1112,6 +1112,7 @@ instance (GCompare k, ReadTag k f) => Read (DMap k f) where
     return (fromList xs)
 
   readListPrec = readListPrecDefault
+-}
 
 {--------------------------------------------------------------------
   Show
@@ -1128,8 +1129,8 @@ showTree :: ShowTag k f => DMap k f -> String
 showTree m
   = showTreeWith showElem True False m
   where
-    showElem :: ShowTag k f => k v -> f v -> String
-    showElem k x  = show (k :=> x)
+    showElem :: ShowTag k f => DSum k f -> String
+    showElem = show 
 
 
 {- | /O(n)/. The expression (@'showTreeWith' showelem hang wide map@) shows
@@ -1137,32 +1138,32 @@ showTree m
  'True', a /hanging/ tree is shown otherwise a rotated tree is shown. If
  @wide@ is 'True', an extra wide version is shown.
 -}
-showTreeWith :: (forall v. k v -> f v -> String) -> Bool -> Bool -> DMap k f -> String
+showTreeWith :: (DSum k f -> String) -> Bool -> Bool -> DMap k f -> String
 showTreeWith showelem hang wide t
   | hang      = (showsTreeHang showelem wide [] t) ""
   | otherwise = (showsTree showelem wide [] [] t) ""
 
-showsTree :: (forall v. k v -> f v -> String) -> Bool -> [String] -> [String] -> DMap k f -> ShowS
+showsTree :: (DSum k f -> String) -> Bool -> [String] -> [String] -> DMap k f -> ShowS
 showsTree showelem wide lbars rbars t
   = case t of
       Tip -> showsBars lbars . showString "|\n"
       Bin _ kx x Tip Tip
-          -> showsBars lbars . showString (showelem kx x) . showString "\n" 
+          -> showsBars lbars . showString (showelem $ kx :=> x) . showString "\n" 
       Bin _ kx x l r
           -> showsTree showelem wide (withBar rbars) (withEmpty rbars) r .
              showWide wide rbars .
-             showsBars lbars . showString (showelem kx x) . showString "\n" .
+             showsBars lbars . showString (showelem $ kx :=> x) . showString "\n" .
              showWide wide lbars .
              showsTree showelem wide (withEmpty lbars) (withBar lbars) l
 
-showsTreeHang :: (forall v. k v -> f v -> String) -> Bool -> [String] -> DMap k f -> ShowS
+showsTreeHang :: (DSum k f -> String) -> Bool -> [String] -> DMap k f -> ShowS
 showsTreeHang showelem wide bars t
   = case t of
       Tip -> showsBars bars . showString "|\n" 
       Bin _ kx x Tip Tip
-          -> showsBars bars . showString (showelem kx x) . showString "\n" 
+          -> showsBars bars . showString (showelem $ kx :=> x) . showString "\n" 
       Bin _ kx x l r
-          -> showsBars bars . showString (showelem kx x) . showString "\n" . 
+          -> showsBars bars . showString (showelem $ kx :=> x) . showString "\n" . 
              showWide wide bars .
              showsTreeHang showelem wide (withBar bars) l .
              showWide wide bars .
@@ -1217,6 +1218,7 @@ validsize :: DMap k f -> Bool
 validsize t
   = (realsize t == Just (size t))
   where
+    realsize :: DMap k f -> Maybe Int
     realsize t'
       = case t' of
           Tip            -> Just 0
